@@ -13,6 +13,7 @@
     --muted: #8b949e;
     --accent: #2f81f7;
     --green: #2ea043;
+    --red: #da3633;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -40,6 +41,7 @@
     margin-bottom: 10px;
   }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
   button {
     width: 100%;
     padding: 14px 10px;
@@ -56,6 +58,7 @@
   button.stop-btn { background: #1f6feb; border-color: #388bfd; color: #fff; }
   button.launch-btn { background: #8957e5; border-color: #a371f7; color: #fff; }
   button.active-toggle { background: var(--green); border-color: var(--green); color: #fff; }
+  button.mood-active { border-color: var(--accent); background: rgba(47,129,247,0.22); color: #79c0ff; }
   .status-bar {
     display: flex;
     justify-content: space-between;
@@ -102,7 +105,7 @@
 <body>
 
   <h1>AHAB // BLE REMOTE</h1>
-  <div class="sub">Nordic UART Bridge for main.py (Bluefy iOS)</div>
+  <div class="sub">Nordic UART Controller (Auto Motion &amp; Manual Mode)</div>
 
   <!-- 1. BLE Connection -->
   <div class="card">
@@ -114,20 +117,11 @@
     </div>
   </div>
 
-  <!-- 2. Bench Simulation -->
+  <!-- 2. Vehicle Auto Motion Toggle -->
   <div class="card">
-    <div class="card-title">2. Bench Simulation (Matches main.py)</div>
+    <div class="card-title">2. Vehicle Motion &amp; GPS Mode</div>
     <div class="grid-2">
-      <button id="btnSimStop" class="stop-btn">Simulate Stop ('0')<br><small style="font-weight:400">5s Wake → Alert → Look</small></button>
-      <button id="btnSimLaunch" class="launch-btn">Simulate Launch ('1')<br><small style="font-weight:400">3s Eyelids &amp; BL Sleep</small></button>
-    </div>
-  </div>
-
-  <!-- 3. Live Vehicle Motion + GPS Triggers -->
-  <div class="card">
-    <div class="card-title">3. Live Silverado Motion + GPS Trigger</div>
-    <div class="grid-2">
-      <button id="btnSensors">Enable Motion &amp; GPS</button>
+      <button id="btnSensors">Motion &amp; GPS: OFF</button>
       <button id="btnCalibrate">Zero / Calibrate Mount</button>
     </div>
 
@@ -141,8 +135,8 @@
         <div class="metric-lbl">GPS Speed</div>
       </div>
       <div class="metric">
-        <div class="metric-val" id="valVehState">STOPPED</div>
-        <div class="metric-lbl">Detected State</div>
+        <div class="metric-val" id="valVehState">MANUAL</div>
+        <div class="metric-lbl">Mode / State</div>
       </div>
     </div>
 
@@ -152,19 +146,37 @@
     </div>
   </div>
 
+  <!-- 3. Manual Mode Controls -->
+  <div class="card">
+    <div class="card-title">3. Manual Wake / Sleep &amp; Expressions</div>
+    <div class="grid-2" style="margin-bottom:8px;">
+      <button id="btnSimStop" class="stop-btn">Wake / Stop ('0')<br><small style="font-weight:400">5s Wake → Alert → Look</small></button>
+      <button id="btnSimLaunch" class="launch-btn">Sleep / Launch ('1')<br><small style="font-weight:400">3s Eyelids &amp; BL Sleep</small></button>
+    </div>
+    <div class="grid-3" style="margin-bottom:8px;">
+      <button class="mood-btn" data-mood="NEUTRAL">Neutral</button>
+      <button class="mood-btn" data-mood="SUSPICIOUS">Suspicious</button>
+      <button class="mood-btn" data-mood="ANGRY">Angry</button>
+    </div>
+    <div class="grid-2">
+      <button class="mood-btn" data-mood="ALERT">Alert</button>
+      <button class="mood-btn mood-active" data-mood="AUTO">Auto Cycle</button>
+    </div>
+  </div>
+
   <div class="card">
     <div class="card-title">Event Log</div>
-    <div id="log">Ready. Ensure Ahab is running main.py, then tap Connect.</div>
+    <div id="log">Ready. Tap Connect to AHAB-EYES.</div>
   </div>
 
 <script>
-  // Nordic UART Service UUIDs matching main.py's AhabBLELink
   const UART_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
   const UART_RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 
   let bleDevice = null;
   let rxChar = null;
   let sensorsActive = false;
+  let geoWatchId = null;
 
   let vehicleState = "STOPPED";
   let speedMps = 0.0;
@@ -173,6 +185,9 @@
   let filteredG = 0.0;
   let threshG = 0.12;
   let lastTriggerMs = 0;
+
+  let latestRawY = 0.0;
+  let latestRawZ = 0.0;
 
   const logEl = document.getElementById("log");
   function log(msg) {
@@ -199,11 +214,64 @@
     }
   }
 
+  function disableSensors() {
+    if (!sensorsActive) return;
+    window.removeEventListener("devicemotion", handleDeviceMotion);
+    if (geoWatchId !== null && "geolocation" in navigator) {
+      navigator.geolocation.clearWatch(geoWatchId);
+      geoWatchId = null;
+    }
+    sensorsActive = false;
+    const btn = document.getElementById("btnSensors");
+    btn.textContent = "Motion & GPS: OFF";
+    btn.classList.remove("active-toggle");
+    document.getElementById("valVehState").textContent = "MANUAL";
+    document.getElementById("valAccel").textContent = "0.00 g";
+    document.getElementById("valSpeed").textContent = "0.0 mph";
+    log("Motion & GPS disabled (Manual Mode).");
+  }
+
+  function handleDeviceMotion(e) {
+    if (!sensorsActive) return;
+    const acc = e.acceleration || e.accelerationIncludingGravity;
+    if (!acc) return;
+
+    latestRawY = acc.y || 0;
+    latestRawZ = acc.z || 0;
+
+    const dy = (latestRawY - baselineY) / 9.80665;
+    const dz = (latestRawZ - baselineZ) / 9.80665;
+    const rawLongG = Math.abs(dz) > Math.abs(dy) ? -dz : dy;
+
+    filteredG = filteredG * 0.75 + rawLongG * 0.25;
+    document.getElementById("valAccel").textContent = `${filteredG >= 0 ? "+" : ""}${filteredG.toFixed(2)} g`;
+
+    const now = Date.now();
+    if (now - lastTriggerMs < 2500) return;
+
+    const isStoppedSpeed = speedMps < 0.9; // < 2.0 mph
+    const isMovingSpeed = speedMps > 1.8;  // > 4.0 mph
+
+    if (vehicleState === "MOVING" && isStoppedSpeed && Math.abs(filteredG) < 0.06) {
+      vehicleState = "STOPPED";
+      lastTriggerMs = now;
+      document.getElementById("valVehState").textContent = "STOPPED";
+      log("Auto Trigger: Stopped -> Sending '0'");
+      sendAscii("0");
+    } else if (vehicleState === "STOPPED" && (filteredG > threshG || isMovingSpeed)) {
+      vehicleState = "MOVING";
+      lastTriggerMs = now;
+      document.getElementById("valVehState").textContent = "MOVING";
+      log("Auto Trigger: Moving -> Sending '1'");
+      sendAscii("1");
+    }
+  }
+
   // 1. BLE Connect
   document.getElementById("btnConnect").addEventListener("click", async () => {
     try {
       if (!navigator.bluetooth) {
-        log("ERROR: Web Bluetooth unavailable. Open this page in Bluefy.");
+        log("ERROR: Web Bluetooth unavailable. Open in Bluefy.");
         return;
       }
       log("Scanning for AHAB-EYES...");
@@ -227,43 +295,18 @@
       const st = document.getElementById("bleState");
       st.textContent = "Connected";
       st.classList.add("ok");
-      log("Connected to AHAB-EYES (Nordic UART).");
+      log("Connected to AHAB-EYES.");
     } catch (err) {
       log(`Connect failed: ${err.message}`);
     }
   });
 
-  // 2. Bench Simulation Buttons
-  document.getElementById("btnSimStop").addEventListener("click", () => {
-    vehicleState = "STOPPED";
-    document.getElementById("valVehState").textContent = "STOPPED";
-    sendAscii("0");
-  });
-
-  document.getElementById("btnSimLaunch").addEventListener("click", () => {
-    vehicleState = "MOVING";
-    document.getElementById("valVehState").textContent = "MOVING";
-    sendAscii("1");
-  });
-
-  // Threshold Slider & Calibration
-  document.getElementById("rngThresh").addEventListener("input", (e) => {
-    threshG = parseFloat(e.target.value);
-    document.getElementById("lblThresh").textContent = `${threshG.toFixed(2)} g`;
-  });
-
-  let latestRawY = 0.0;
-  let latestRawZ = 0.0;
-  document.getElementById("btnCalibrate").addEventListener("click", () => {
-    baselineY = latestRawY;
-    baselineZ = latestRawZ;
-    filteredG = 0.0;
-    log("Calibrated resting phone mount baseline.");
-  });
-
-  // 3. Live CoreMotion + CoreLocation Trigger Engine
+  // 2. Toggle Motion & GPS On/Off
   document.getElementById("btnSensors").addEventListener("click", async () => {
-    if (sensorsActive) return;
+    if (sensorsActive) {
+      disableSensors();
+      return;
+    }
 
     if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
       try {
@@ -278,7 +321,7 @@
     }
 
     if ("geolocation" in navigator) {
-      navigator.geolocation.watchPosition(
+      geoWatchId = navigator.geolocation.watchPosition(
         (pos) => {
           if (pos.coords.speed !== null && !Number.isNaN(pos.coords.speed)) {
             speedMps = Math.max(0, pos.coords.speed);
@@ -291,46 +334,51 @@
       );
     }
 
-    window.addEventListener("devicemotion", (e) => {
-      const acc = e.acceleration || e.accelerationIncludingGravity;
-      if (!acc) return;
-
-      latestRawY = acc.y || 0;
-      latestRawZ = acc.z || 0;
-
-      const dy = (latestRawY - baselineY) / 9.80665;
-      const dz = (latestRawZ - baselineZ) / 9.80665;
-      const rawLongG = Math.abs(dz) > Math.abs(dy) ? -dz : dy;
-
-      filteredG = filteredG * 0.75 + rawLongG * 0.25;
-      document.getElementById("valAccel").textContent = `${filteredG >= 0 ? "+" : ""}${filteredG.toFixed(2)} g`;
-
-      const now = Date.now();
-      if (now - lastTriggerMs < 2500) return;
-
-      const isStoppedSpeed = speedMps < 0.9; // < 2.0 mph
-      const isMovingSpeed = speedMps > 1.8;  // > 4.0 mph
-
-      if (vehicleState === "MOVING" && isStoppedSpeed && Math.abs(filteredG) < 0.06) {
-        vehicleState = "STOPPED";
-        lastTriggerMs = now;
-        document.getElementById("valVehState").textContent = "STOPPED";
-        log("Trigger: Vehicle Stopped -> Sending '0' (Wake)");
-        sendAscii("0");
-      } else if (vehicleState === "STOPPED" && (filteredG > threshG || isMovingSpeed)) {
-        vehicleState = "MOVING";
-        lastTriggerMs = now;
-        document.getElementById("valVehState").textContent = "MOVING";
-        log("Trigger: Vehicle Launching -> Sending '1' (Sleep)");
-        sendAscii("1");
-      }
-    });
-
+    window.addEventListener("devicemotion", handleDeviceMotion);
     sensorsActive = true;
+    vehicleState = "STOPPED";
     const btn = document.getElementById("btnSensors");
-    btn.textContent = "Motion & GPS Active";
+    btn.textContent = "Motion & GPS: ON";
     btn.classList.add("active-toggle");
-    log("Motion & GPS sensors enabled.");
+    document.getElementById("valVehState").textContent = "STOPPED";
+    log("Motion & GPS enabled (Auto Vehicle Mode).");
+  });
+
+  // Calibrate Resting Orientation
+  document.getElementById("btnCalibrate").addEventListener("click", () => {
+    baselineY = latestRawY;
+    baselineZ = latestRawZ;
+    filteredG = 0.0;
+    log("Calibrated resting mount baseline.");
+  });
+
+  // Threshold Slider
+  document.getElementById("rngThresh").addEventListener("input", (e) => {
+    threshG = parseFloat(e.target.value);
+    document.getElementById("lblThresh").textContent = `${threshG.toFixed(2)} g`;
+  });
+
+  // 3. Manual Wake / Sleep (automatically switches out of Auto Motion mode)
+  document.getElementById("btnSimStop").addEventListener("click", () => {
+    disableSensors();
+    vehicleState = "STOPPED";
+    sendAscii("0");
+  });
+
+  document.getElementById("btnSimLaunch").addEventListener("click", () => {
+    disableSensors();
+    vehicleState = "MOVING";
+    sendAscii("1");
+  });
+
+  // Manual Expression Buttons
+  document.querySelectorAll(".mood-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      disableSensors();
+      document.querySelectorAll(".mood-btn").forEach((b) => b.classList.remove("mood-active"));
+      btn.classList.add("mood-active");
+      sendAscii(btn.dataset.mood);
+    });
   });
 </script>
 </body>
