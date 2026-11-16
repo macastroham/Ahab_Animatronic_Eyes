@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>AHAB BLE Controller</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #2f81f7;
+    --green: #2ea043;
+    --amber: #d29922;
+    --red: #f85149;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0;
+    padding: 16px;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: 0.5px; }
+  .sub { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .card-title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .row { display: flex; gap: 8px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  button {
+    width: 100%;
+    padding: 13px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: #21262d;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:active { transform: scale(0.98); opacity: 0.9; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.stop-btn { background: #1f6feb; border-color: #388bfd; color: #fff; }
+  button.launch-btn { background: #8957e5; border-color: #a371f7; color: #fff; }
+  button.active-toggle { background: var(--green); border-color: var(--green); color: #fff; }
+  .status-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 10px;
+    font-size: 13px;
+  }
+  .badge {
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    background: #21262d;
+    color: var(--muted);
+  }
+  .badge.ok { background: rgba(46,160,67,0.2); color: #3fb950; }
+  .telemetry {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    margin: 10px 0;
+    text-align: center;
+  }
+  .metric {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 4px;
+  }
+  .metric-val { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .metric-lbl { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .slider-row { margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .slider-row input { width: 100%; margin-top: 4px; }
+  #log {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    color: var(--muted);
+    max-height: 90px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+
+  <h1>AHAB // BLE REMOTE</h1>
+  <div class="sub">Bluefy Web Bluetooth &amp; CoreMotion Controller</div>
+
+  <!-- 1. BLE Connection -->
+  <div class="card">
+    <div class="card-title">1. Connection</div>
+    <button id="btnConnect" class="primary">Connect to AHAB-EYES</button>
+    <div class="status-bar">
+      <span>BLE Link: <strong id="bleState" class="badge">Disconnected</strong></span>
+      <span>Ahab State: <strong id="ahabState" class="badge">--</strong></span>
+    </div>
+  </div>
+
+  <!-- 2. Bench Simulation -->
+  <div class="card">
+    <div class="card-title">2. Bench Simulation (Vehicle Sequences)</div>
+    <div class="grid-2">
+      <button id="btnSimStop" class="stop-btn">Simulate Stop<br><small style="font-weight:400">Wake → Surprise → Look</small></button>
+      <button id="btnSimLaunch" class="launch-btn">Simulate Launch<br><small style="font-weight:400">2.0s Close → Sleep</small></button>
+    </div>
+  </div>
+
+  <!-- 3. Live Vehicle Motion + GPS Triggers -->
+  <div class="card">
+    <div class="card-title">3. Live Silverado Motion + GPS Trigger</div>
+    <div class="grid-2">
+      <button id="btnSensors">Enable Motion &amp; GPS</button>
+      <button id="btnCalibrate">Zero / Calibrate Mount</button>
+    </div>
+
+    <div class="telemetry">
+      <div class="metric">
+        <div class="metric-val" id="valAccel">0.00 g</div>
+        <div class="metric-lbl">Longitudinal G</div>
+      </div>
+      <div class="metric">
+        <div class="metric-val" id="valSpeed">0.0 mph</div>
+        <div class="metric-lbl">GPS Speed</div>
+      </div>
+      <div class="metric">
+        <div class="metric-val" id="valVehState">STOPPED</div>
+        <div class="metric-lbl">Detected State</div>
+      </div>
+    </div>
+
+    <div class="slider-row">
+      Brake / Launch Trigger Threshold: <strong id="lblThresh">0.12 g</strong>
+      <input id="rngThresh" type="range" min="0.05" max="0.30" step="0.01" value="0.12" />
+    </div>
+  </div>
+
+  <!-- 4. Manual Expression & Action Overrides -->
+  <div class="card">
+    <div class="card-title">4. Manual Eye Overrides</div>
+    <div class="grid-3" style="margin-bottom:8px;">
+      <button data-cmd="1,0,0">Neutral</button>
+      <button data-cmd="1,1,0">Surprise</button>
+      <button data-cmd="1,2,0">Suspicious</button>
+    </div>
+    <div class="grid-3">
+      <button data-cmd="1,4,0">Sleep</button>
+      <button data-cmd="3,1,0">Blink</button>
+      <button data-cmd="4,1,0">Auto Scan</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Event Log</div>
+    <div id="log">Ready. Open this page in Bluefy on iPhone.</div>
+  </div>
+
+<script>
+  const SERVICE_UUID = "19b10000-e8f2-537e-4f6c-d104768a1214";
+  const CMD_CHAR_UUID = "19b10001-e8f2-537e-4f6c-d104768a1214";
+  const STATUS_CHAR_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214";
+
+  let bleDevice = null;
+  let cmdChar = null;
+  let sensorsActive = false;
+
+  // Vehicle state tracking
+  let vehicleState = "STOPPED"; // "STOPPED" | "MOVING"
+  let speedMps = 0.0;
+  let baselineY = 0.0;
+  let baselineZ = 0.0;
+  let filteredG = 0.0;
+  let threshG = 0.12;
+  let lastTriggerMs = 0;
+
+  const logEl = document.getElementById("log");
+  function log(msg) {
+    const t = new Date().toLocaleTimeString([], { hour12: false });
+    logEl.textContent = `[${t}] ${msg}\n` + logEl.textContent.slice(0, 1200);
+  }
+
+  async function sendCmd(b0, b1, b2) {
+    if (!cmdChar) {
+      log(`(Offline) Cmd [${b0}, ${b1}, ${b2}]`);
+      return;
+    }
+    try {
+      const packet = new Uint8Array([b0, b1, b2]);
+      if (cmdChar.writeValueWithoutResponse) {
+        await cmdChar.writeValueWithoutResponse(packet);
+      } else {
+        await cmdChar.writeValue(packet);
+      }
+      log(`TX -> [${b0}, ${b1}, ${b2}]`);
+    } catch (err) {
+      log(`BLE Write Error: ${err.message}`);
+    }
+  }
+
+  // 1. BLE Connect & Disconnect Handler
+  document.getElementById("btnConnect").addEventListener("click", async () => {
+    try {
+      if (!navigator.bluetooth) {
+        log("ERROR: Web Bluetooth unavailable. Open this page in Bluefy.");
+        return;
+      }
+      log("Scanning for AHAB-EYES...");
+      bleDevice = await navigator.bluetooth.requestDevice({
+        filters: [{ name: "AHAB-EYES" }],
+        optionalServices: [SERVICE_UUID]
+      });
+
+      bleDevice.addEventListener("gattserverdisconnected", () => {
+        cmdChar = null;
+        const st = document.getElementById("bleState");
+        st.textContent = "Disconnected";
+        st.classList.remove("ok");
+        log("BLE disconnected.");
+      });
+
+      const server = await bleDevice.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE_UUID);
+      cmdChar = await service.getCharacteristic(CMD_CHAR_UUID);
+
+      try {
+        const statusChar = await service.getCharacteristic(STATUS_CHAR_UUID);
+        await statusChar.startNotifications();
+        statusChar.addEventListener("characteristicvaluechanged", (e) => {
+          const val = new TextDecoder().decode(e.target.value);
+          const badge = document.getElementById("ahabState");
+          badge.textContent = val;
+          badge.classList.add("ok");
+        });
+      } catch (_) {}
+
+      const st = document.getElementById("bleState");
+      st.textContent = "Connected";
+      st.classList.add("ok");
+      log("Connected to AHAB-EYES.");
+    } catch (err) {
+      log(`Connect failed: ${err.message}`);
+    }
+  });
+
+  // 2. Bench Simulation Buttons
+  document.getElementById("btnSimStop").addEventListener("click", () => {
+    vehicleState = "STOPPED";
+    document.getElementById("valVehState").textContent = "STOPPED";
+    sendCmd(0x01, 0x05, 0x00); // SEQ_AUTO_STOP
+  });
+
+  document.getElementById("btnSimLaunch").addEventListener("click", () => {
+    vehicleState = "MOVING";
+    document.getElementById("valVehState").textContent = "MOVING";
+    sendCmd(0x01, 0x06, 0x00); // SEQ_AUTO_LAUNCH
+  });
+
+  // 3. Manual Override Buttons
+  document.querySelectorAll("button[data-cmd]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const parts = btn.dataset.cmd.split(",").map(Number);
+      sendCmd(parts[0], parts[1], parts[2]);
+    });
+  });
+
+  // Threshold Slider
+  document.getElementById("rngThresh").addEventListener("input", (e) => {
+    threshG = parseFloat(e.target.value);
+    document.getElementById("lblThresh").textContent = `${threshG.toFixed(2)} g`;
+  });
+
+  // Calibrate Resting Orientation
+  let latestRawY = 0.0;
+  let latestRawZ = 0.0;
+  document.getElementById("btnCalibrate").addEventListener("click", () => {
+    baselineY = latestRawY;
+    baselineZ = latestRawZ;
+    filteredG = 0.0;
+    log("Calibrated resting phone mount baseline.");
+  });
+
+  // 4. Live CoreMotion + CoreLocation Automotive Trigger Engine
+  document.getElementById("btnSensors").addEventListener("click", async () => {
+    if (sensorsActive) return;
+
+    if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+      try {
+        const res = await DeviceMotionEvent.requestPermission();
+        if (res !== "granted") {
+          log("Motion permission denied.");
+          return;
+        }
+      } catch (err) {
+        log(`Motion permission error: ${err.message}`);
+      }
+    }
+
+    // GPS Speed Watch (confirms true stop vs. rolling traffic)
+    if ("geolocation" in navigator) {
+      navigator.geolocation.watchPosition(
+        (pos) => {
+          if (pos.coords.speed !== null && !Number.isNaN(pos.coords.speed)) {
+            speedMps = Math.max(0, pos.coords.speed);
+            const mph = speedMps * 2.23694;
+            document.getElementById("valSpeed").textContent = `${mph.toFixed(1)} mph`;
+          }
+        },
+        (err) => log(`GPS note: ${err.message}`),
+        { enableHighAccuracy: true, maximumAge: 500, timeout: 5000 }
+      );
+    }
+
+    // Accelerometer Linear Acceleration Watch
+    window.addEventListener("devicemotion", (e) => {
+      const acc = e.acceleration || e.accelerationIncludingGravity;
+      if (!acc) return;
+
+      latestRawY = acc.y || 0;
+      latestRawZ = acc.z || 0;
+
+      // Combine Y (portrait vertical) & Z (screen normal) to support upright dash mount or angled console
+      const dy = (latestRawY - baselineY) / 9.80665;
+      const dz = (latestRawZ - baselineZ) / 9.80665;
+      const rawLongG = Math.abs(dz) > Math.abs(dy) ? -dz : dy;
+
+      // Low-pass filter road vibration (alpha = 0.25)
+      filteredG = filteredG * 0.75 + rawLongG * 0.25;
+      document.getElementById("valAccel").textContent = `${filteredG >= 0 ? "+" : ""}${filteredG.toFixed(2)} g`;
+
+      const now = Date.now();
+      if (now - lastTriggerMs < 2500) return; // 2.5s debounce between state transitions
+
+      const isStoppedSpeed = speedMps < 0.9; // < 2.0 mph
+      const isMovingSpeed = speedMps > 1.8;  // > 4.0 mph
+
+      // Transition 1: Moving -> Stopped (Braking settled or GPS speed dropped below 2 mph)
+      if (vehicleState === "MOVING" && isStoppedSpeed && Math.abs(filteredG) < 0.06) {
+        vehicleState = "STOPPED";
+        lastTriggerMs = now;
+        document.getElementById("valVehState").textContent = "STOPPED";
+        log("Trigger: Vehicle Stopped -> Waking Ahab");
+        sendCmd(0x01, 0x05, 0x00);
+      }
+      // Transition 2: Stopped -> Accelerating (Positive launch G > threshold OR GPS speed > 4 mph)
+      else if (vehicleState === "STOPPED" && (filteredG > threshG || isMovingSpeed)) {
+        vehicleState = "MOVING";
+        lastTriggerMs = now;
+        document.getElementById("valVehState").textContent = "MOVING";
+        log("Trigger: Vehicle Launching -> 2s Sleep Close");
+        sendCmd(0x01, 0x06, 0x00);
+      }
+    });
+
+    sensorsActive = true;
+    const btn = document.getElementById("btnSensors");
+    btn.textContent = "Motion & GPS Active";
+    btn.classList.add("active-toggle");
+    log("Motion & GPS sensors enabled.");
+  });
+</script>
+</body>
+</html>
