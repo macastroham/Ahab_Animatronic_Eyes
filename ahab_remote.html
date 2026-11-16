@@ -13,8 +13,6 @@
     --muted: #8b949e;
     --accent: #2f81f7;
     --green: #2ea043;
-    --amber: #d29922;
-    --red: #f85149;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -41,12 +39,10 @@
     color: var(--muted);
     margin-bottom: 10px;
   }
-  .row { display: flex; gap: 8px; }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
   button {
     width: 100%;
-    padding: 13px 10px;
+    padding: 14px 10px;
     border-radius: 10px;
     border: 1px solid var(--border);
     background: #21262d;
@@ -97,7 +93,7 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 11px;
     color: var(--muted);
-    max-height: 90px;
+    max-height: 110px;
     overflow-y: auto;
     white-space: pre-wrap;
   }
@@ -106,7 +102,7 @@
 <body>
 
   <h1>AHAB // BLE REMOTE</h1>
-  <div class="sub">Bluefy Web Bluetooth &amp; CoreMotion Controller</div>
+  <div class="sub">Nordic UART Bridge for main.py (Bluefy iOS)</div>
 
   <!-- 1. BLE Connection -->
   <div class="card">
@@ -114,16 +110,16 @@
     <button id="btnConnect" class="primary">Connect to AHAB-EYES</button>
     <div class="status-bar">
       <span>BLE Link: <strong id="bleState" class="badge">Disconnected</strong></span>
-      <span>Ahab State: <strong id="ahabState" class="badge">--</strong></span>
+      <span>Last Sent: <strong id="lastCmd" class="badge">--</strong></span>
     </div>
   </div>
 
   <!-- 2. Bench Simulation -->
   <div class="card">
-    <div class="card-title">2. Bench Simulation (Vehicle Sequences)</div>
+    <div class="card-title">2. Bench Simulation (Matches main.py)</div>
     <div class="grid-2">
-      <button id="btnSimStop" class="stop-btn">Simulate Stop<br><small style="font-weight:400">Wake → Surprise → Look</small></button>
-      <button id="btnSimLaunch" class="launch-btn">Simulate Launch<br><small style="font-weight:400">2.0s Close → Sleep</small></button>
+      <button id="btnSimStop" class="stop-btn">Simulate Stop ('0')<br><small style="font-weight:400">5s Wake → Alert → Look</small></button>
+      <button id="btnSimLaunch" class="launch-btn">Simulate Launch ('1')<br><small style="font-weight:400">3s Eyelids &amp; BL Sleep</small></button>
     </div>
   </div>
 
@@ -151,42 +147,26 @@
     </div>
 
     <div class="slider-row">
-      Brake / Launch Trigger Threshold: <strong id="lblThresh">0.12 g</strong>
+      Launch Trigger Threshold: <strong id="lblThresh">0.12 g</strong>
       <input id="rngThresh" type="range" min="0.05" max="0.30" step="0.01" value="0.12" />
-    </div>
-  </div>
-
-  <!-- 4. Manual Expression & Action Overrides -->
-  <div class="card">
-    <div class="card-title">4. Manual Eye Overrides</div>
-    <div class="grid-3" style="margin-bottom:8px;">
-      <button data-cmd="1,0,0">Neutral</button>
-      <button data-cmd="1,1,0">Surprise</button>
-      <button data-cmd="1,2,0">Suspicious</button>
-    </div>
-    <div class="grid-3">
-      <button data-cmd="1,4,0">Sleep</button>
-      <button data-cmd="3,1,0">Blink</button>
-      <button data-cmd="4,1,0">Auto Scan</button>
     </div>
   </div>
 
   <div class="card">
     <div class="card-title">Event Log</div>
-    <div id="log">Ready. Open this page in Bluefy on iPhone.</div>
+    <div id="log">Ready. Ensure Ahab is running main.py, then tap Connect.</div>
   </div>
 
 <script>
-  const SERVICE_UUID = "19b10000-e8f2-537e-4f6c-d104768a1214";
-  const CMD_CHAR_UUID = "19b10001-e8f2-537e-4f6c-d104768a1214";
-  const STATUS_CHAR_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214";
+  // Nordic UART Service UUIDs matching main.py's AhabBLELink
+  const UART_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+  const UART_RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 
   let bleDevice = null;
-  let cmdChar = null;
+  let rxChar = null;
   let sensorsActive = false;
 
-  // Vehicle state tracking
-  let vehicleState = "STOPPED"; // "STOPPED" | "MOVING"
+  let vehicleState = "STOPPED";
   let speedMps = 0.0;
   let baselineY = 0.0;
   let baselineZ = 0.0;
@@ -200,25 +180,26 @@
     logEl.textContent = `[${t}] ${msg}\n` + logEl.textContent.slice(0, 1200);
   }
 
-  async function sendCmd(b0, b1, b2) {
-    if (!cmdChar) {
-      log(`(Offline) Cmd [${b0}, ${b1}, ${b2}]`);
+  async function sendAscii(text) {
+    document.getElementById("lastCmd").textContent = text;
+    if (!rxChar) {
+      log(`(Offline) Would send '${text}'`);
       return;
     }
     try {
-      const packet = new Uint8Array([b0, b1, b2]);
-      if (cmdChar.writeValueWithoutResponse) {
-        await cmdChar.writeValueWithoutResponse(packet);
+      const payload = new TextEncoder().encode(text);
+      if (rxChar.writeValueWithoutResponse) {
+        await rxChar.writeValueWithoutResponse(payload);
       } else {
-        await cmdChar.writeValue(packet);
+        await rxChar.writeValue(payload);
       }
-      log(`TX -> [${b0}, ${b1}, ${b2}]`);
+      log(`TX -> '${text}'`);
     } catch (err) {
       log(`BLE Write Error: ${err.message}`);
     }
   }
 
-  // 1. BLE Connect & Disconnect Handler
+  // 1. BLE Connect
   document.getElementById("btnConnect").addEventListener("click", async () => {
     try {
       if (!navigator.bluetooth) {
@@ -228,11 +209,11 @@
       log("Scanning for AHAB-EYES...");
       bleDevice = await navigator.bluetooth.requestDevice({
         filters: [{ name: "AHAB-EYES" }],
-        optionalServices: [SERVICE_UUID]
+        optionalServices: [UART_SERVICE_UUID]
       });
 
       bleDevice.addEventListener("gattserverdisconnected", () => {
-        cmdChar = null;
+        rxChar = null;
         const st = document.getElementById("bleState");
         st.textContent = "Disconnected";
         st.classList.remove("ok");
@@ -240,24 +221,13 @@
       });
 
       const server = await bleDevice.gatt.connect();
-      const service = await server.getPrimaryService(SERVICE_UUID);
-      cmdChar = await service.getCharacteristic(CMD_CHAR_UUID);
-
-      try {
-        const statusChar = await service.getCharacteristic(STATUS_CHAR_UUID);
-        await statusChar.startNotifications();
-        statusChar.addEventListener("characteristicvaluechanged", (e) => {
-          const val = new TextDecoder().decode(e.target.value);
-          const badge = document.getElementById("ahabState");
-          badge.textContent = val;
-          badge.classList.add("ok");
-        });
-      } catch (_) {}
+      const service = await server.getPrimaryService(UART_SERVICE_UUID);
+      rxChar = await service.getCharacteristic(UART_RX_CHAR_UUID);
 
       const st = document.getElementById("bleState");
       st.textContent = "Connected";
       st.classList.add("ok");
-      log("Connected to AHAB-EYES.");
+      log("Connected to AHAB-EYES (Nordic UART).");
     } catch (err) {
       log(`Connect failed: ${err.message}`);
     }
@@ -267,30 +237,21 @@
   document.getElementById("btnSimStop").addEventListener("click", () => {
     vehicleState = "STOPPED";
     document.getElementById("valVehState").textContent = "STOPPED";
-    sendCmd(0x01, 0x05, 0x00); // SEQ_AUTO_STOP
+    sendAscii("0");
   });
 
   document.getElementById("btnSimLaunch").addEventListener("click", () => {
     vehicleState = "MOVING";
     document.getElementById("valVehState").textContent = "MOVING";
-    sendCmd(0x01, 0x06, 0x00); // SEQ_AUTO_LAUNCH
+    sendAscii("1");
   });
 
-  // 3. Manual Override Buttons
-  document.querySelectorAll("button[data-cmd]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const parts = btn.dataset.cmd.split(",").map(Number);
-      sendCmd(parts[0], parts[1], parts[2]);
-    });
-  });
-
-  // Threshold Slider
+  // Threshold Slider & Calibration
   document.getElementById("rngThresh").addEventListener("input", (e) => {
     threshG = parseFloat(e.target.value);
     document.getElementById("lblThresh").textContent = `${threshG.toFixed(2)} g`;
   });
 
-  // Calibrate Resting Orientation
   let latestRawY = 0.0;
   let latestRawZ = 0.0;
   document.getElementById("btnCalibrate").addEventListener("click", () => {
@@ -300,7 +261,7 @@
     log("Calibrated resting phone mount baseline.");
   });
 
-  // 4. Live CoreMotion + CoreLocation Automotive Trigger Engine
+  // 3. Live CoreMotion + CoreLocation Trigger Engine
   document.getElementById("btnSensors").addEventListener("click", async () => {
     if (sensorsActive) return;
 
@@ -316,7 +277,6 @@
       }
     }
 
-    // GPS Speed Watch (confirms true stop vs. rolling traffic)
     if ("geolocation" in navigator) {
       navigator.geolocation.watchPosition(
         (pos) => {
@@ -331,7 +291,6 @@
       );
     }
 
-    // Accelerometer Linear Acceleration Watch
     window.addEventListener("devicemotion", (e) => {
       const acc = e.acceleration || e.accelerationIncludingGravity;
       if (!acc) return;
@@ -339,36 +298,31 @@
       latestRawY = acc.y || 0;
       latestRawZ = acc.z || 0;
 
-      // Combine Y (portrait vertical) & Z (screen normal) to support upright dash mount or angled console
       const dy = (latestRawY - baselineY) / 9.80665;
       const dz = (latestRawZ - baselineZ) / 9.80665;
       const rawLongG = Math.abs(dz) > Math.abs(dy) ? -dz : dy;
 
-      // Low-pass filter road vibration (alpha = 0.25)
       filteredG = filteredG * 0.75 + rawLongG * 0.25;
       document.getElementById("valAccel").textContent = `${filteredG >= 0 ? "+" : ""}${filteredG.toFixed(2)} g`;
 
       const now = Date.now();
-      if (now - lastTriggerMs < 2500) return; // 2.5s debounce between state transitions
+      if (now - lastTriggerMs < 2500) return;
 
       const isStoppedSpeed = speedMps < 0.9; // < 2.0 mph
       const isMovingSpeed = speedMps > 1.8;  // > 4.0 mph
 
-      // Transition 1: Moving -> Stopped (Braking settled or GPS speed dropped below 2 mph)
       if (vehicleState === "MOVING" && isStoppedSpeed && Math.abs(filteredG) < 0.06) {
         vehicleState = "STOPPED";
         lastTriggerMs = now;
         document.getElementById("valVehState").textContent = "STOPPED";
-        log("Trigger: Vehicle Stopped -> Waking Ahab");
-        sendCmd(0x01, 0x05, 0x00);
-      }
-      // Transition 2: Stopped -> Accelerating (Positive launch G > threshold OR GPS speed > 4 mph)
-      else if (vehicleState === "STOPPED" && (filteredG > threshG || isMovingSpeed)) {
+        log("Trigger: Vehicle Stopped -> Sending '0' (Wake)");
+        sendAscii("0");
+      } else if (vehicleState === "STOPPED" && (filteredG > threshG || isMovingSpeed)) {
         vehicleState = "MOVING";
         lastTriggerMs = now;
         document.getElementById("valVehState").textContent = "MOVING";
-        log("Trigger: Vehicle Launching -> 2s Sleep Close");
-        sendCmd(0x01, 0x06, 0x00);
+        log("Trigger: Vehicle Launching -> Sending '1' (Sleep)");
+        sendAscii("1");
       }
     });
 
