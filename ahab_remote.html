@@ -112,9 +112,11 @@
     <div class="card-title">1. Connection</div>
     <button id="btnConnect" class="primary">Connect to AHAB-EYES</button>
     <div class="status-bar">
-      <span>BLE Link: <strong id="bleState" class="badge">Disconnected</strong></span>
-      <span>Last Sent: <strong id="lastCmd" class="badge">--</strong></span>
+      <span>BLE: <strong id="bleState" class="badge">Disconnected</strong></span>
+      <span>Battery: <strong id="batBadge" class="badge">-- V</strong></span>
+      <span>Sent: <strong id="lastCmd" class="badge">--</strong></span>
     </div>
+    <div id="batBanner" style="display:none; margin-top:10px; padding:8px 10px; border-radius:8px; font-size:12px; font-weight:700; text-align:center;"></div>
   </div>
 
   <!-- 2. Vehicle Auto Motion Toggle -->
