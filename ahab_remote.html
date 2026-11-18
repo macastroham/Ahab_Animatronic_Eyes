@@ -13,7 +13,6 @@
     --muted: #8b949e;
     --accent: #2f81f7;
     --green: #2ea043;
-    --red: #da3633;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -64,17 +63,29 @@
     justify-content: space-between;
     align-items: center;
     margin-top: 10px;
-    font-size: 13px;
+    font-size: 12px;
+    gap: 6px;
   }
   .badge {
     padding: 3px 8px;
     border-radius: 999px;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     background: #21262d;
     color: var(--muted);
   }
   .badge.ok { background: rgba(46,160,67,0.2); color: #3fb950; }
+  .badge.warn { background: rgba(210,153,34,0.25); color: #e3b341; }
+  .badge.crit { background: rgba(218,54,51,0.28); color: #ff7b72; }
+  #batBanner {
+    display: none;
+    margin-top: 10px;
+    padding: 9px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    text-align: center;
+  }
   .telemetry {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
@@ -105,18 +116,18 @@
 <body>
 
   <h1>AHAB // BLE REMOTE</h1>
-  <div class="sub">Nordic UART Controller (Auto Motion &amp; Manual Mode)</div>
+  <div class="sub">Nordic UART Controller (Auto Motion, Manual Mode &amp; Battery)</div>
 
-  <!-- 1. BLE Connection -->
+  <!-- 1. BLE Connection & Battery Status -->
   <div class="card">
-    <div class="card-title">1. Connection</div>
+    <div class="card-title">1. Connection &amp; Battery</div>
     <button id="btnConnect" class="primary">Connect to AHAB-EYES</button>
     <div class="status-bar">
       <span>BLE: <strong id="bleState" class="badge">Disconnected</strong></span>
       <span>Battery: <strong id="batBadge" class="badge">-- V</strong></span>
       <span>Sent: <strong id="lastCmd" class="badge">--</strong></span>
     </div>
-    <div id="batBanner" style="display:none; margin-top:10px; padding:8px 10px; border-radius:8px; font-size:12px; font-weight:700; text-align:center;"></div>
+    <div id="batBanner"></div>
   </div>
 
   <!-- 2. Vehicle Auto Motion Toggle -->
@@ -174,6 +185,7 @@
 <script>
   const UART_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
   const UART_RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+  const UART_TX_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 
   let bleDevice = null;
   let rxChar = null;
@@ -213,6 +225,30 @@
       log(`TX -> '${text}'`);
     } catch (err) {
       log(`BLE Write Error: ${err.message}`);
+    }
+  }
+
+  function updateBatteryUI(volts, pct, status) {
+    const badge = document.getElementById("batBadge");
+    const banner = document.getElementById("batBanner");
+    badge.textContent = `${volts}V (${pct}%)`;
+    badge.classList.remove("ok", "warn", "crit");
+
+    if (status === "LOW") {
+      badge.classList.add("warn");
+      banner.style.display = "block";
+      banner.style.background = "rgba(210,153,34,0.2)";
+      banner.style.color = "#e3b341";
+      banner.textContent = `LOW BATTERY (${volts}V) — RECHARGE SOON`;
+    } else if (status === "CRIT") {
+      badge.classList.add("crit");
+      banner.style.display = "block";
+      banner.style.background = "rgba(218,54,51,0.25)";
+      banner.style.color = "#ff7b72";
+      banner.textContent = `CRITICAL BATTERY (${volts}V) — AHAB ENTERING DEEP SLEEP`;
+    } else {
+      badge.classList.add("ok");
+      banner.style.display = "none";
     }
   }
 
@@ -287,12 +323,26 @@
         const st = document.getElementById("bleState");
         st.textContent = "Disconnected";
         st.classList.remove("ok");
+        const batBadge = document.getElementById("batBadge");
+        batBadge.textContent = "-- V";
+        batBadge.classList.remove("ok", "warn", "crit");
+        document.getElementById("batBanner").style.display = "none";
         log("BLE disconnected.");
       });
 
       const server = await bleDevice.gatt.connect();
       const service = await server.getPrimaryService(UART_SERVICE_UUID);
       rxChar = await service.getCharacteristic(UART_RX_CHAR_UUID);
+
+      const txChar = await service.getCharacteristic(UART_TX_CHAR_UUID);
+      await txChar.startNotifications();
+      txChar.addEventListener("characteristicvaluechanged", (e) => {
+        const msg = new TextDecoder().decode(e.target.value).trim();
+        if (msg.startsWith("BAT:")) {
+          const [volts, pct, status] = msg.slice(4).split(",");
+          updateBatteryUI(volts, pct, status);
+        }
+      });
 
       const st = document.getElementById("bleState");
       st.textContent = "Connected";
@@ -360,7 +410,7 @@
     document.getElementById("lblThresh").textContent = `${threshG.toFixed(2)} g`;
   });
 
-  // 3. Manual Wake / Sleep (automatically switches out of Auto Motion mode)
+  // 3. Manual Wake / Sleep
   document.getElementById("btnSimStop").addEventListener("click", () => {
     disableSensors();
     vehicleState = "STOPPED";
